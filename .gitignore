@@ -6,3 +6,6 @@ build/
 .env
 .env.local
 .vite/
+
+# SQLite の実データと生成トークン
+data/

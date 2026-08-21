@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { Plus, X, ChevronLeft, Search, Trash2, Check, Layers, Tag } from "lucide-react";
+import { Plus, X, ChevronLeft, Search, Trash2, Check, Layers, Tag, Cloud, CloudOff, RefreshCw } from "lucide-react";
+import { loadConfig, saveConfig, normalizeUrl, fetchState, pushState, checkConnection, mergeState } from "./api.js";
 
 /* ===========================================================
    共通パレット・ステータス
@@ -391,6 +392,7 @@ function buildSeedProblemsForLevel(level, levelTypes) {
       source: "入試基礎",
       memo: "",
       createdAt: Date.now() + i,
+      updatedAt: Date.now() + i,
     };
   });
 }
@@ -503,6 +505,15 @@ export default function MathOrganizer() {
   const [statusFilter, setStatusFilter] = useState("all");
   const fontsInjected = useRef(false);
 
+  // ---- サーバー同期 ----
+  const [serverConfig, setServerConfig] = useState(() => loadConfig());
+  const [syncModal, setSyncModal] = useState(null);
+  // idle | syncing | synced | error
+  const [sync, setSync] = useState({ state: "idle", message: "", at: 0 });
+  const versionRef = useRef(null); // サーバーの最新 version（楽観ロック用）
+  const pushTimer = useRef(null);
+  const skipNextPush = useRef(false); // サーバーから来た値をそのまま返さない
+
   const level = getLevel(levelId);
   const levelUnits = useMemo(() => unitsFlat(level), [level]);
   const levelTypes = useMemo(() => types.filter((t) => t.level === levelId), [types, levelId]);
@@ -570,6 +581,97 @@ export default function MathOrganizer() {
     saveJSON("math-problem-types", types);
   }, [types, loaded]);
 
+  // 起動時（と接続先変更時）に一度サーバーと突き合わせる
+  useEffect(() => {
+    if (!loaded || !serverConfig) {
+      versionRef.current = null;
+      return;
+    }
+    const ac = new AbortController();
+
+    (async () => {
+      setSync({ state: "syncing", message: "サーバーと同期中", at: Date.now() });
+      try {
+        const remote = await fetchState(serverConfig, ac.signal);
+        const local = { problems, types, seededLevels: LEVELS.map((lv) => lv.id) };
+        const merged = mergeState(local, remote);
+        versionRef.current = remote.version;
+
+        const changed =
+          merged.problems.length !== remote.problems.length || merged.types.length !== remote.types.length;
+
+        if (changed) {
+          const saved = await pushState(serverConfig, { ...merged, version: remote.version }, ac.signal);
+          versionRef.current = saved.version;
+        }
+
+        skipNextPush.current = true;
+        setProblems(merged.problems);
+        setTypes(merged.types);
+        setSync({ state: "synced", message: "同期しました", at: Date.now() });
+      } catch (err) {
+        if (ac.signal.aborted) return;
+        setSync({ state: "error", message: err.message || "同期に失敗しました", at: Date.now() });
+      }
+    })();
+
+    return () => ac.abort();
+    // problems/types を依存に入れるとループするので、接続先が変わったときだけ走らせる
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, serverConfig]);
+
+  // 変更をまとめてサーバーへ送る（入力のたびに叩かないよう遅延させる）
+  useEffect(() => {
+    if (!loaded || !serverConfig) return;
+    if (skipNextPush.current) {
+      skipNextPush.current = false;
+      return;
+    }
+
+    clearTimeout(pushTimer.current);
+    pushTimer.current = setTimeout(async () => {
+      setSync({ state: "syncing", message: "保存中", at: Date.now() });
+      const body = {
+        problems,
+        types,
+        seededLevels: LEVELS.map((lv) => lv.id),
+        version: versionRef.current ?? undefined,
+      };
+      try {
+        const saved = await pushState(serverConfig, body);
+        versionRef.current = saved.version;
+        setSync({ state: "synced", message: "保存しました", at: Date.now() });
+      } catch (err) {
+        if (err.status === 409 && err.payload?.state) {
+          // 別端末が先に書いていた。統合してから version 指定なしで上書きする。
+          try {
+            const merged = mergeState({ problems, types, seededLevels: [] }, err.payload.state);
+            const saved = await pushState(serverConfig, merged);
+            versionRef.current = saved.version;
+            skipNextPush.current = true;
+            setProblems(merged.problems);
+            setTypes(merged.types);
+            setSync({ state: "synced", message: "他の端末の変更と統合しました", at: Date.now() });
+            return;
+          } catch (retryErr) {
+            setSync({ state: "error", message: retryErr.message, at: Date.now() });
+            return;
+          }
+        }
+        setSync({ state: "error", message: err.message || "保存に失敗しました", at: Date.now() });
+      }
+    }, 800);
+
+    return () => clearTimeout(pushTimer.current);
+  }, [problems, types, loaded, serverConfig]);
+
+  const applyServerConfig = (config) => {
+    saveConfig(config);
+    setServerConfig(config);
+    setSyncModal(null);
+    if (!config) setSync({ state: "idle", message: "", at: 0 });
+  };
+
   const stats = useMemo(() => {
     const total = levelProblems.length;
     const mastered = levelProblems.filter((p) => p.status === "mastered").length;
@@ -622,10 +724,12 @@ export default function MathOrganizer() {
     if (!modal) return;
     const d = modal.draft;
     if (!d.title || !d.title.trim() || !d.unitId) return;
+    const now = Date.now();
     if (modal.mode === "add") {
-      setProblems((prev) => [...prev, { ...d, id: uid(), createdAt: Date.now() }]);
+      setProblems((prev) => [...prev, { ...d, id: uid(), createdAt: now, updatedAt: now }]);
     } else {
-      setProblems((prev) => prev.map((p) => (p.id === d.id ? d : p)));
+      // updatedAt は端末間の統合で「新しい方を採る」判定に使う
+      setProblems((prev) => prev.map((p) => (p.id === d.id ? { ...d, updatedAt: now } : p)));
     }
     closeModal();
   };
@@ -638,7 +742,13 @@ export default function MathOrganizer() {
   const addType = (name) => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    const t = { id: uid(), name: trimmed, color: TYPE_PALETTE[levelTypes.length % TYPE_PALETTE.length], level: levelId };
+    const t = {
+      id: uid(),
+      name: trimmed,
+      color: TYPE_PALETTE[levelTypes.length % TYPE_PALETTE.length],
+      level: levelId,
+      updatedAt: Date.now(),
+    };
     setTypes((prev) => [...prev, t]);
     setTypeModal(null);
     openGroup({ screen: "type", typeId: t.id });
@@ -698,6 +808,9 @@ export default function MathOrganizer() {
           onOpenProblem={openEdit}
           onOpenAddType={() => setTypeModal({ name: "" })}
           onOpenAddProblem={() => openAdd(null, null)}
+          sync={sync}
+          connected={!!serverConfig}
+          onOpenSync={() => setSyncModal({ url: serverConfig?.url || "", token: serverConfig?.token || "" })}
         />
       )}
 
@@ -750,6 +863,16 @@ export default function MathOrganizer() {
       )}
 
       {typeModal && <AddTypeModal typeModal={typeModal} setTypeModal={setTypeModal} onSubmit={addType} onClose={() => setTypeModal(null)} />}
+
+      {syncModal && (
+        <SyncModal
+          draft={syncModal}
+          setDraft={setSyncModal}
+          connected={!!serverConfig}
+          onApply={applyServerConfig}
+          onClose={() => setSyncModal(null)}
+        />
+      )}
     </div>
   );
 }
@@ -788,24 +911,30 @@ function HomeScreen({
   onOpenProblem,
   onOpenAddType,
   onOpenAddProblem,
+  sync,
+  connected,
+  onOpenSync,
 }) {
   return (
     <div style={{ padding: "28px 18px 100px" }}>
-      <div style={{ marginBottom: 16 }}>
-        <div
-          style={{
-            fontFamily: "'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', YuMincho, serif",
-            fontWeight: 700,
-            fontSize: 26,
-            letterSpacing: "0.03em",
-            color: "#2B2620",
-          }}
-        >
-          問題帳
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
+        <div>
+          <div
+            style={{
+              fontFamily: "'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', YuMincho, serif",
+              fontWeight: 700,
+              fontSize: 26,
+              letterSpacing: "0.03em",
+              color: "#2B2620",
+            }}
+          >
+            問題帳
+          </div>
+          <div style={{ fontSize: 12.5, color: "#8A8371", marginTop: 4, letterSpacing: "0.02em" }}>
+            {level.label}（{level.subLabel}） &middot; 単元別 / タイプ別 索引
+          </div>
         </div>
-        <div style={{ fontSize: 12.5, color: "#8A8371", marginTop: 4, letterSpacing: "0.02em" }}>
-          {level.label}（{level.subLabel}） &middot; 単元別 / タイプ別 索引
-        </div>
+        <SyncBadge sync={sync} connected={connected} onClick={onOpenSync} />
       </div>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 18, overflowX: "auto", paddingBottom: 2 }}>
@@ -977,6 +1106,41 @@ function HomeScreen({
         <Plus size={24} />
       </button>
     </div>
+  );
+}
+
+/** 同期状態。押すと接続設定が開く。 */
+function SyncBadge({ sync, connected, onClick }) {
+  const look = !connected
+    ? { icon: <CloudOff size={13} />, label: "この端末のみ", color: "#8A8371", border: "#E7E1D2" }
+    : sync.state === "error"
+    ? { icon: <CloudOff size={13} />, label: "同期エラー", color: "#B5472A", border: "#EBC9BC" }
+    : sync.state === "syncing"
+    ? { icon: <RefreshCw size={13} />, label: "同期中", color: "#B5842A", border: "#E7DCC0" }
+    : { icon: <Cloud size={13} />, label: "同期済み", color: "#2E7D5B", border: "#CFE0D6" };
+
+  return (
+    <button
+      onClick={onClick}
+      title={sync.message || (connected ? "サーバーと同期しています" : "サーバーに接続していません")}
+      style={{
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: 11.5,
+        padding: "6px 10px",
+        borderRadius: 20,
+        border: `1px solid ${look.border}`,
+        background: "#FFFFFF",
+        color: look.color,
+        cursor: "pointer",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {look.icon}
+      {look.label}
+    </button>
   );
 }
 
@@ -1395,6 +1559,161 @@ function AddTypeModal({ typeModal, setTypeModal, onSubmit, onClose }) {
         >
           追加する
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* ===========================================================
+   接続設定モーダル
+=========================================================== */
+function SyncModal({ draft, setDraft, connected, onApply, onClose }) {
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState(null);
+
+  const canApply = draft.url.trim() && draft.token.trim();
+
+  const test = async () => {
+    setTesting(true);
+    setResult(null);
+    try {
+      const info = await checkConnection({ url: draft.url, token: draft.token });
+      setResult({
+        ok: true,
+        text: `つながりました。サーバー側に問題 ${info.problems} 件・タイプ ${info.types} 件（version ${info.version}）`,
+      });
+    } catch (err) {
+      setResult({
+        ok: false,
+        text: err.status === 401 ? "トークンが違います" : err.message || "接続できませんでした",
+      });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, background: "rgba(30,26,20,0.42)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 }}
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: "100%", maxWidth: 480, background: "#FAF8F2", borderRadius: "14px 14px 0 0", padding: "18px 20px 26px", maxHeight: "88vh", overflowY: "auto" }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <div>
+            <div style={{ fontFamily: "'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', YuMincho, serif", fontWeight: 700, fontSize: 17 }}>
+              サーバー接続
+            </div>
+            <div style={{ fontSize: 11, color: "#8A8371", marginTop: 2 }}>
+              {connected ? "複数の端末で問題帳を共有しています" : "未接続。この端末の中だけに保存しています"}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", padding: 6 }}>
+            <X size={18} color="#8A8371" />
+          </button>
+        </div>
+
+        <div style={{ fontSize: 12, color: "#8A8371", lineHeight: 1.7, marginBottom: 16 }}>
+          <code style={{ background: "#EFE9DA", padding: "1px 5px", borderRadius: 3 }}>npm run server</code> で起動したときに
+          表示される URL とトークンを入れてください。トークンは <code style={{ background: "#EFE9DA", padding: "1px 5px", borderRadius: 3 }}>data/token</code> にも入っています。
+        </div>
+
+        <Field label="サーバー URL">
+          <input
+            autoFocus
+            value={draft.url}
+            onChange={(e) => setDraft({ ...draft, url: e.target.value })}
+            placeholder="http://127.0.0.1:5174"
+            style={inputStyle}
+          />
+        </Field>
+
+        <Field label="トークン">
+          <input
+            value={draft.token}
+            onChange={(e) => setDraft({ ...draft, token: e.target.value })}
+            placeholder="data/token の中身"
+            style={inputStyle}
+          />
+        </Field>
+
+        {result && (
+          <div
+            style={{
+              fontSize: 12,
+              lineHeight: 1.6,
+              padding: "9px 11px",
+              borderRadius: 4,
+              marginBottom: 14,
+              background: result.ok ? "#EFF5F1" : "#FFF6F3",
+              border: `1px solid ${result.ok ? "#CFE0D6" : "#EBC9BC"}`,
+              color: result.ok ? "#2E7D5B" : "#7A3320",
+            }}
+          >
+            {result.text}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <button
+            onClick={test}
+            disabled={!canApply || testing}
+            style={{
+              border: "1px solid #E7E1D2",
+              background: "#FFFFFF",
+              color: "#6B6656",
+              borderRadius: 4,
+              padding: "11px 16px",
+              fontSize: 13,
+              cursor: canApply && !testing ? "pointer" : "not-allowed",
+            }}
+          >
+            {testing ? "確認中…" : "接続を確認"}
+          </button>
+          <button
+            onClick={() => onApply({ url: normalizeUrl(draft.url), token: draft.token.trim() })}
+            disabled={!canApply}
+            style={{
+              flex: 1,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              justifyContent: "center",
+              border: "none",
+              background: canApply ? "#2B2620" : "#D8D2C2",
+              color: "#FFFFFF",
+              borderRadius: 4,
+              padding: "12px 16px",
+              fontSize: 13.5,
+              fontWeight: 500,
+              cursor: canApply ? "pointer" : "not-allowed",
+            }}
+          >
+            <Check size={15} />
+            接続する
+          </button>
+        </div>
+
+        {connected && (
+          <button
+            onClick={() => onApply(null)}
+            style={{
+              width: "100%",
+              marginTop: 10,
+              border: "1px solid #E7E1D2",
+              background: "#FFFFFF",
+              color: "#B5472A",
+              borderRadius: 4,
+              padding: "10px 16px",
+              fontSize: 12.5,
+              cursor: "pointer",
+            }}
+          >
+            接続を解除（この端末のデータは残ります）
+          </button>
+        )}
       </div>
     </div>
   );

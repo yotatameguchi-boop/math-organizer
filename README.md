@@ -15,6 +15,11 @@
 index.html                  エントリ
 src/main.jsx                マウント
 src/MathOrganizer.jsx       本体（default export: MathOrganizer）
+src/api.js                  サーバー同期クライアント
+server/db.js                SQLite スキーマとクエリ
+server/app.js               HTTP ハンドラ
+server/index.js             起動スクリプト
+server/*.test.js            テスト
 scripts/make-artifact.mjs   dist を単一 HTML にまとめる
 ```
 
@@ -49,6 +54,57 @@ CSP で外部フォントが読めない環境では OS 側の明朝／ゴシッ
 Hiragino Sans など）にフォールバックします。日本語フォントは data URI 埋め込みだと
 数 MB 規模になり、かつユーザー入力文字をサブセット化できないため埋め込んでいません。
 
+## バックエンド（任意）
+
+接続しなくてもアプリは動きます。繋ぐと複数の端末で同じ問題帳を共有できます。
+
+```bash
+npm run build     # 静的配信したい場合。dev サーバーだけで使うなら不要
+npm run server
+```
+
+起動すると URL とトークンが表示されます。アプリ右上の「この端末のみ」バッジから接続設定を開き、
+その 2 つを入れてください。トークンは `data/token` にも保存されます。
+
+依存はゼロです。DB は Node 24 標準の `node:sqlite`、HTTP は `node:http` で、`data/` 配下に
+SQLite ファイルを作ります（`.gitignore` 済み）。
+
+### 環境変数
+
+| 変数 | 既定値 | 用途 |
+| --- | --- | --- |
+| `PORT` | `5174` | 待ち受けポート |
+| `HOST` | `127.0.0.1` | 他端末から使うなら `0.0.0.0` |
+| `MO_DB` | `data/math-organizer.db` | SQLite ファイル |
+| `MO_TOKEN` | `data/token` を自動生成 | 認証トークン |
+| `MO_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | CORS 許可オリジン（カンマ区切り） |
+
+### API
+
+`/api/health` 以外は `Authorization: Bearer <token>` が必要です。
+
+| メソッド | パス | 内容 |
+| --- | --- | --- |
+| `GET` | `/api/health` | 疎通確認。認証不要 |
+| `GET` | `/api/state` | 全件（problems / types / seededLevels / version） |
+| `PUT` | `/api/state` | スナップショット保存。`version` を付けるとズレていれば 409 と最新状態を返す。省略すると強制上書き |
+| `GET` | `/api/problems` | `level` `unitId` `status` `typeId` `q` で絞り込み |
+| `GET` | `/api/stats` | 総数・ステータス別・単元別の集計 |
+
+### 同期のふるまい
+
+- 起動時にサーバーと突き合わせ、id が同じ項目は `updatedAt` が新しい方を採ります
+- 変更は 800ms まとめてから PUT します
+- 409 が返ったら統合し直して再送します
+- サーバーに繋がらない間も localStorage に書き続けるので、オフラインで操作しても失われません
+- 削除は伝播しません。単一ユーザー前提なので、消したものが復活するより消えると困るものが残る方を選んでいます
+
+## テスト
+
+```bash
+npm test
+```
+
 ## データの保存先
 
 `loadJSON` / `saveJSON` が次の順にフォールバックします。
@@ -64,3 +120,4 @@ Hiragino Sans など）にフォールバックします。日本語フォント
 | `math-problems` | 登録した問題 |
 | `math-problem-types` | 解法タイプ |
 | `math-seeded-levels` | 例題を投入済みのレベル |
+| `math-server-config` | バックエンドの URL とトークン（端末ごと） |
