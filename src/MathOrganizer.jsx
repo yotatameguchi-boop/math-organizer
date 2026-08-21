@@ -653,11 +653,14 @@ export default function MathOrganizer() {
   return (
     <div
       style={{
-        fontFamily: "'Noto Sans JP', sans-serif",
+        fontFamily: "'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', YuGothic, sans-serif",
         color: "#2B2620",
         minHeight: "100vh",
-        background:
-          "#FAF8F2 repeating-linear-gradient(0deg, transparent, transparent 23px, #EDE7D8 24px), repeating-linear-gradient(90deg, transparent, transparent 23px, #EDE7D8 24px)",
+        // 複数レイヤーの background 短縮記法では色は最終レイヤーにしか置けず、
+        // 先頭に置くと宣言ごと無効になるため color と image を分ける
+        backgroundColor: "#FAF8F2",
+        backgroundImage:
+          "repeating-linear-gradient(0deg, transparent, transparent 23px, #EDE7D8 24px), repeating-linear-gradient(90deg, transparent, transparent 23px, #EDE7D8 24px)",
         maxWidth: 480,
         margin: "0 auto",
         paddingBottom: 40,
@@ -791,7 +794,7 @@ function HomeScreen({
       <div style={{ marginBottom: 16 }}>
         <div
           style={{
-            fontFamily: "'Shippori Mincho', serif",
+            fontFamily: "'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', YuMincho, serif",
             fontWeight: 700,
             fontSize: 26,
             letterSpacing: "0.03em",
@@ -843,9 +846,9 @@ function HomeScreen({
         <ProgressRing ratio={stats.ratio} color="#2E7D5B" size={48} />
         <div>
           <div style={{ fontSize: 13, color: "#8A8371" }}>登録問題数</div>
-          <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Shippori Mincho', serif" }}>
+          <div style={{ fontSize: 20, fontWeight: 700, fontFamily: "'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', YuMincho, serif" }}>
             {stats.total}
-            <span style={{ fontSize: 12, color: "#8A8371", fontFamily: "'Noto Sans JP', sans-serif" }}> 問</span>
+            <span style={{ fontSize: 12, color: "#8A8371", fontFamily: "'Noto Sans JP', 'Hiragino Sans', 'Yu Gothic', YuGothic, sans-serif" }}> 問</span>
             <span style={{ fontSize: 12, color: "#2E7D5B", marginLeft: 10 }}>習得 {stats.mastered}</span>
           </div>
         </div>
@@ -899,7 +902,7 @@ function HomeScreen({
                 <div key={cat.id} style={{ marginBottom: 22 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                     <div style={{ width: 10, height: 10, borderRadius: 2, background: cat.ink }} />
-                    <div style={{ fontFamily: "'Shippori Mincho', serif", fontWeight: 700, fontSize: 15.5, color: cat.ink }}>
+                    <div style={{ fontFamily: "'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', YuMincho, serif", fontWeight: 700, fontSize: 15.5, color: cat.ink }}>
                       {cat.name}
                     </div>
                   </div>
@@ -1124,7 +1127,7 @@ function GroupScreen({ kind, title, subtitle, accent, problems, levelUnits, leve
         </div>
       )}
 
-      <div style={{ fontFamily: "'Shippori Mincho', serif", fontWeight: 700, fontSize: 22, color: accent || "#2B2620", marginBottom: 2 }}>{title}</div>
+      <div style={{ fontFamily: "'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', YuMincho, serif", fontWeight: 700, fontSize: 22, color: accent || "#2B2620", marginBottom: 2 }}>{title}</div>
       <div style={{ fontSize: 12, color: "#8A8371", marginBottom: 16 }}>{subtitle}</div>
 
       <div style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 16, paddingBottom: 2 }}>
@@ -1222,7 +1225,7 @@ function ProblemModal({ modal, setModal, levelUnits, levelTypes, level, onClose,
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
           <div>
-            <div style={{ fontFamily: "'Shippori Mincho', serif", fontWeight: 700, fontSize: 17 }}>{mode === "add" ? "問題を追加" : "問題を編集"}</div>
+            <div style={{ fontFamily: "'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', YuMincho, serif", fontWeight: 700, fontSize: 17 }}>{mode === "add" ? "問題を追加" : "問題を編集"}</div>
             <div style={{ fontSize: 11, color: "#8A8371", marginTop: 2 }}>
               {level.label}（{level.subLabel}）
             </div>
@@ -1357,7 +1360,7 @@ function AddTypeModal({ typeModal, setTypeModal, onSubmit, onClose }) {
     <div style={{ position: "fixed", inset: 0, background: "rgba(30,26,20,0.42)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 50 }} onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#FAF8F2", borderRadius: "14px 14px 0 0", padding: "18px 20px 26px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-          <div style={{ fontFamily: "'Shippori Mincho', serif", fontWeight: 700, fontSize: 17 }}>新しい問題タイプ</div>
+          <div style={{ fontFamily: "'Shippori Mincho', 'Hiragino Mincho ProN', 'Yu Mincho', YuMincho, serif", fontWeight: 700, fontSize: 17 }}>新しい問題タイプ</div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", padding: 6 }}>
             <X size={18} color="#8A8371" />
           </button>
