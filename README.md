@@ -99,6 +99,33 @@ SQLite ファイルを作ります（`.gitignore` 済み）。
 - サーバーに繋がらない間も localStorage に書き続けるので、オフラインで操作しても失われません
 - 削除は伝播しません。単一ユーザー前提なので、消したものが復活するより消えると困るものが残る方を選んでいます
 
+### Docker で動かす
+
+```bash
+docker compose up -d
+docker compose logs -f     # 初回はここにトークンが出ます
+```
+
+`http://localhost:5174` でアプリごと配信されます。DB とトークンはホストの `data/` に
+バインドマウントしているので、コンテナを作り直しても問題帳は消えません。
+
+実行イメージには `node_modules` が入っていません。サーバーが `node:http` と `node:sqlite` しか
+使っておらず、ビルドステージで入れた依存を実行ステージに持ち込まないためです。`node` ユーザーで
+起動し、`/api/health` でヘルスチェックします。
+
+```bash
+docker compose down            # 停止（data/ は残る）
+docker compose up -d --build   # コードを変えたら焼き直す
+```
+
+トークンを固定したい、ポートを変えたいときは `.env` を置きます。
+
+```
+PORT=5174
+MO_TOKEN=好きな文字列
+MO_ORIGINS=http://localhost:5173,http://127.0.0.1:5174
+```
+
 ## テスト
 
 ```bash

@@ -1,6 +1,15 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { Plus, X, ChevronLeft, Search, Trash2, Check, Layers, Tag, Cloud, CloudOff, RefreshCw } from "lucide-react";
-import { loadConfig, saveConfig, normalizeUrl, fetchState, pushState, checkConnection, mergeState } from "./api.js";
+import {
+  loadConfig,
+  saveConfig,
+  normalizeUrl,
+  fetchState,
+  pushState,
+  checkConnection,
+  mergeState,
+  fingerprint,
+} from "./api.js";
 
 /* ===========================================================
    共通パレット・ステータス
@@ -375,6 +384,11 @@ function defaultTypesForLevel(level) {
   }));
 }
 
+// 例題の作成時刻は固定値にする。
+// Date.now() にすると、新しい端末で投入した例題が必ずサーバー上の記録より新しくなり、
+// 統合時に勝ってしまって他の端末で付けた習熟度を白紙に戻す。
+const SEED_EPOCH = 1700000000000;
+
 function buildSeedProblemsForLevel(level, levelTypes) {
   // 保存済みタイプが並び替え・削除されていてもよいよう、
   // インデックスではなくタイプ名で紐づける（該当なしならタグ無しで登録）
@@ -391,8 +405,8 @@ function buildSeedProblemsForLevel(level, levelTypes) {
       status: "todo",
       source: "入試基礎",
       memo: "",
-      createdAt: Date.now() + i,
-      updatedAt: Date.now() + i,
+      createdAt: SEED_EPOCH + i,
+      updatedAt: SEED_EPOCH + i,
     };
   });
 }
@@ -597,8 +611,9 @@ export default function MathOrganizer() {
         const merged = mergeState(local, remote);
         versionRef.current = remote.version;
 
-        const changed =
-          merged.problems.length !== remote.problems.length || merged.types.length !== remote.types.length;
+        // 件数だけ見ると、件数が同じで中身が違う場合に送信されず、
+        // 画面とサーバーが黙って食い違ったまま残る
+        const changed = fingerprint(merged) !== fingerprint(remote);
 
         if (changed) {
           const saved = await pushState(serverConfig, { ...merged, version: remote.version }, ac.signal);

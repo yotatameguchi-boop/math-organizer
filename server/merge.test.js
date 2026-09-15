@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mergeState, normalizeUrl } from "../src/api.js";
+import { mergeState, normalizeUrl, fingerprint } from "../src/api.js";
 
 const p = (id, extra = {}) => ({ id, title: id, level: "daigakujuken", unitId: "I-1", ...extra });
 
@@ -58,6 +58,52 @@ test("タイプも同じ規則で統合される", () => {
 test("空同士でも壊れない", () => {
   const out = mergeState({ problems: [], types: [] }, { problems: [], types: [] });
   assert.deepEqual(out, { problems: [], types: [], seededLevels: [] });
+});
+
+test("新しい端末の例題が、サーバー上の習熟度を上書きしない", () => {
+  // 例題は固定の作成時刻を持つ。Date.now() にすると必ず最新になり、
+  // 初回同期で他の端末の進捗が白紙に戻る。
+  const SEED_EPOCH = 1700000000000;
+  const fresh = { id: "seed-daigakujuken-0", title: "例題", status: "todo", updatedAt: SEED_EPOCH };
+  const edited = { id: "seed-daigakujuken-0", title: "例題", status: "mastered", updatedAt: 1750000000000 };
+
+  const out = mergeState({ problems: [fresh], types: [], seededLevels: [] }, { problems: [edited], types: [], seededLevels: [] });
+
+  assert.equal(out.problems.length, 1);
+  assert.equal(out.problems[0].status, "mastered", "サーバー側の編集が残ること");
+});
+
+test("fingerprint は件数が同じでも中身の違いを捉える", () => {
+  const base = { problems: [{ id: "a", status: "todo", types: [] }], types: [] };
+  const changed = { problems: [{ id: "a", status: "mastered", types: [] }], types: [] };
+
+  assert.notEqual(fingerprint(base), fingerprint(changed));
+});
+
+test("fingerprint は並び順とタグ順の違いを無視する", () => {
+  const a = {
+    problems: [
+      { id: "b", status: "todo", types: ["t2", "t1"] },
+      { id: "a", status: "todo", types: [] },
+    ],
+    types: [],
+  };
+  const b = {
+    problems: [
+      { id: "a", status: "todo", types: [] },
+      { id: "b", status: "todo", types: ["t1", "t2"] },
+    ],
+    types: [],
+  };
+
+  assert.equal(fingerprint(a), fingerprint(b));
+});
+
+test("fingerprint は version や updatedAt の違いでは変わらない", () => {
+  const a = { version: 1, problems: [{ id: "a", status: "todo", updatedAt: 100 }], types: [] };
+  const b = { version: 9, problems: [{ id: "a", status: "todo", updatedAt: 999 }], types: [] };
+
+  assert.equal(fingerprint(a), fingerprint(b), "無駄な送信を招かないこと");
 });
 
 test("normalizeUrl が末尾スラッシュ・/api・スキーム欠落を吸収する", () => {

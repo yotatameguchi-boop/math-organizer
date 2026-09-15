@@ -84,6 +84,36 @@ export async function checkConnection(config) {
 }
 
 /**
+ * 2 つの状態が実質同じかを比べるための指紋。
+ *
+ * 件数だけでは、件数が同じで中身が違う場合を取りこぼす。
+ * 配列の順序やサーバーが付ける項目に左右されないよう、id 順に並べて必要な項目だけ拾う。
+ */
+export function fingerprint(state) {
+  const problems = [...(state.problems || [])]
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    .map((p) =>
+      [
+        p.id,
+        p.level,
+        p.unitId,
+        p.title,
+        p.difficulty,
+        p.status,
+        p.source || "",
+        p.memo || "",
+        [...(p.types || [])].sort().join("|"),
+      ].join("")
+    );
+
+  const types = [...(state.types || [])]
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    .map((t) => [t.id, t.level, t.name, t.color].join(""));
+
+  return JSON.stringify({ problems, types });
+}
+
+/**
  * サーバーとローカルを id で突き合わせて統合する。
  *
  * 同じ id が両方にあれば updatedAt が新しい方を採る。
